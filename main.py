@@ -46,7 +46,7 @@ if not df.empty:
 
 # --- 4. FILTRO DE ANO ---
 anos = ["Todos"] + sorted(df["ano_campeonato"].unique())
-ano = st.selectbox("Selecione o Ano", anos)
+ano = st.sidebar.selectbox("Selecione o Ano", anos)
 
 # Cria dataframe filtrado pelo ano (usado no gráfico geral)
 dfToFilter = df.copy()
@@ -145,7 +145,7 @@ else:
     st.subheader(f"Estatísticas: {time_selecionado} como {opcao}")
     
     # 1. Filtra apenas os jogos desse time como mandante
-    df_time = df[df[opcao] == time_selecionado].copy()
+    df_time = df[df[tipo[0]] == time_selecionado].copy()
 
     # Se um ano específico foi escolhido lá em cima, filtramos também pelo ano
     if ano != "Todos":
@@ -153,6 +153,7 @@ else:
 
     if df_time.empty:
         st.warning(f"Sem dados para {time_selecionado} no filtro selecionado.")
+        
     else:
         # --- DEFINIÇÃO DINÂMICA DO EIXO X ---
         # Se selecionou "Todos" os anos -> Eixo X é o ANO
@@ -166,52 +167,40 @@ else:
 
         # --- GRÁFICO 1: MÉDIA DE GOLS ---
         media_gols_time = (
-)
-
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(media_ano.index, media_ano.values, marker="o")
-        ax.set_title(f"Média de gols por ano — {time}")
-        ax.set_xlabel("Ano")
-        ax.set_ylabel("Média de gols")
-
-    st.pyplot(fig)
-
-    if ano == "Todos":
-        # Média de publico por ano
-        publico_medio_ano = (
-        dfToFilter[(dfToFilter[tipo[0]] == time) & (dfToFilter["publico"] > 0)]
-        .groupby("ano_campeonato")["publico"]
-        .mean()
-        .sort_index()
-    )
-        texto = f"Média de publico por ano {opcao}"
-
-    else:
-        # Média de publico por rodada
-        publico_medio_ano = (
-            dfToFilter[(dfToFilter[tipo[0]] == time) & (dfToFilter["publico"] > 0)]
-            .groupby("rodada")["publico"]
+            df_time.groupby(coluna_agrupamento)[tipo[1]]
             .mean()
             .sort_index()
         )
-
-    st.subheader(texto)
-    if not publico_medio_ano.empty:
-        fig1, ax1 = plt.subplots(figsize=(12, 6))
-        # fazer um if pra trocar por rodada tambem
         
+        fig, ax = plt.subplots(figsize=(12, 5))
+        # astype(int) garante que o ano/rodada não apareça como 2003.0
+        ax.plot(media_gols_time.index.astype(int), media_gols_time.values, marker="o", color="blue")
+        ax.set_title(f"Média de Gols - {time_selecionado}")
+        ax.set_xlabel(label_x)
+        ax.set_ylabel("Média de Gols")
+        ax.set_xticks(media_gols_time.index.astype(int)) # Força ticks inteiros
+        st.pyplot(fig)
 
-        ax1.plot(publico_medio_ano.index.astype(int), publico_medio_ano.values, marker="o")
-        #ax1.set_xticklabels(publico_medio_ano.index, rotation=90)
-        ax1.set_xticks(publico_medio_ano.index.astype(int))
-        ax1.set_xticklabels(publico_medio_ano.index.astype(int), rotation=45)
+        # --- GRÁFICO 2: MÉDIA DE PÚBLICO ---
+        # Verifica se existe coluna de publico antes de tentar plotar
+        colunas_possiveis = ["publico", "publico_pagante"]
+        coluna_publico = next((c for c in colunas_possiveis if c in df_time.columns), None)
 
-        ax1.set_title(f"media de publico ano {opcao} — {time}")
-        ax1.set_xlabel("Time")
-        ax1.set_ylabel("Público médio")
-        st.pyplot(fig1)
-    
-    else:
-        st.write("Não há dados para o ano selecionado.")
-    
-    st.subheader(texto)
+        if coluna_publico:
+            media_publico = (
+                df_time[df_time[coluna_agrupamento] > 0.0]
+                .groupby(coluna_agrupamento)[coluna_publico]
+                .mean()
+                .sort_index()
+            )
+            print(media_publico)
+            st.subheader(f"Média de Público por {label_x}")
+            fig1, ax1 = plt.subplots(figsize=(12, 5))
+            ax1.plot(media_publico.index.astype(int), media_publico.values, marker="o", color="green")
+            ax1.set_title(f"Público - {time_selecionado}")
+            ax1.set_xlabel(label_x)
+            ax1.set_ylabel("Público Médio")
+            ax1.set_xticks(media_publico.index.astype(int)) # Força ticks inteiros
+            st.pyplot(fig1)
+        else:
+            st.info("Dados de público não disponíveis neste dataset.")
