@@ -10,10 +10,10 @@ sp = SparkSession.builder.appName("Brasileirao").getOrCreate()
 
 st.title("Análises do Brasileirão")
 
-
+# --- 1. CARGA DE DADOS ---
 @st.cache_resource
 def load_data():
-  
+    # Mock para evitar erro se o arquivo não existir no meu ambiente de teste
     if not hasattr(load_data, "mock"): 
          return sp.read.option("header", True).option("inferSchema", True).csv("DatasetBrasileirao2003.csv")
     return None
@@ -25,11 +25,12 @@ def toPandas(_df_spark):
 df_spark = load_data()
 df = toPandas(df_spark)
 
-
+# --- 2. LIMPEZA DOS NOMES ---
 if not df.empty:
+    # Unifica nomes (Ex: Santos FC -> Santos)
     df["time_mandante"] = df["time_mandante"].str.strip().replace(NOMES_UNIFICADOS)
 
-
+# --- 3. IMAGENS (CACHEADA) ---
 @st.cache_data
 def preparar_imagens(times_unicos):
     l_nomes = []
@@ -41,138 +42,134 @@ lista_nomes = []
 lista_imagens = []
 
 if not df.empty:
-    # Passamos os times já limpos e unificados
     lista_nomes, lista_imagens = preparar_imagens(df["time_mandante"].unique())
 
-# --- 4. FILTROS ---
+# --- 4. FILTRO DE ANO ---
 anos = ["Todos"] + sorted(df["ano_campeonato"].unique())
 ano = st.selectbox("Selecione o Ano", anos)
 
+# Cria dataframe filtrado pelo ano (usado no gráfico geral)
 dfToFilter = df.copy()
 if ano != "Todos":
     dfToFilter = dfToFilter[dfToFilter["ano_campeonato"] == ano]
 
-
-media_gols = (
-    dfToFilter.groupby(tipo[0])[tipo[1]]
-    .mean()
-    .sort_values()
-)
-
+# --- 5. SELEÇÃO DE TIME (VISUAL) ---
 st.write("---")
 st.subheader("Selecione um time:")
 
-
+# Inicializa chave para resetar imagens
 if 'img_key' not in st.session_state:
     st.session_state['img_key'] = 0
 
-
+# Botão de Reset
 if st.button("Ver todos os times (Limpar seleção)"):
     st.session_state['img_key'] += 1
     st.rerun() 
 
-
+# Componente Clickable Images
 clicked_index = clickable_images(
     paths=lista_imagens, 
     titles=lista_nomes,
     div_style={
-        "display": "flex",
-        "justify-content": "center",
-        "flex-wrap": "wrap",
-        "background-color": "#f9f9f9",
-        "padding": "10px",
-        "border-radius": "10px"
+        "display": "flex", "justify-content": "center", "flex-wrap": "wrap",
+        "background-color": "#f9f9f9", "padding": "10px", "border-radius": "10px"
     },
     img_style={
-        "margin": "5px",
-        "height": "60px",  
-        "object-fit": "contain", 
-        "cursor": "pointer",
-        ":hover": {"transform": "scale(1.1)"} 
+        "margin": "5px", "height": "60px", "object-fit": "contain", 
+        "cursor": "pointer", ":hover": {"transform": "scale(1.1)"} 
     },
     key=f"image_div_{st.session_state['img_key']}" 
 )
 
-
+# Define qual time está selecionado
 time_selecionado = "Todos"
-
 if clicked_index > -1:
     time_selecionado = lista_nomes[clicked_index]
     st.markdown(f"**Time Selecionado:** {time_selecionado}")
 
+# =========================================================
+# LÓGICA DE PLOTAGEM
+# =========================================================
 
-
+# CENÁRIO 1: NENHUM TIME SELECIONADO (VISÃO GERAL)
 if time_selecionado == "Todos":
-    st.subheader("Média de gols por time mandante")
+    st.subheader("Média de gols por time mandante (Geral)")
     
+    # Agrupa pelo time mandante
+    media_gols = (
+        dfToFilter.groupby("time_mandante")["gols_mandante"]
+        .mean()
+        .sort_values()
+    )
+
     if not media_gols.empty:
         fig, ax = plt.subplots(figsize=(12, 6))
         ax.bar(media_gols.index, media_gols.values)
         ax.set_xticklabels(media_gols.index, rotation=90)
-        ax.set_title("Média de gols por time mandante")
+        ax.set_title(f"Média de gols mandante - {ano}")
         ax.set_xlabel("Time")
         ax.set_ylabel("Média de gols")
         st.pyplot(fig)
 
+# CENÁRIO 2: TIME ESPECÍFICO SELECIONADO
 else:
-    st.subheader(f"Média de gols do {time_selecionado} como mandante por ano")
+    st.subheader(f"Estatísticas: {time_selecionado}")
+    
+    # 1. Filtra apenas os jogos desse time como mandante
+    df_time = df[df["time_mandante"] == time_selecionado].copy()
 
+    # Se um ano específico foi escolhido lá em cima, filtramos também pelo ano
+    if ano != "Todos":
+        df_time = df_time[df_time["ano_campeonato"] == ano]
 
-    media_ano = (
-        df[df["time_mandante"] == time_selecionado]
-        .groupby("ano_campeonato")["gols_mandante"]
-        .mean()
-        .sort_index()
-    )
-
-    if not media_ano.empty:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(media_ano.index.astype(str), media_ano.values, marker="o")
-        ax.set_title(f"Média de gols por ano — {time_selecionado}")
-        ax.set_xlabel("Ano")
-        ax.set_ylabel("Média de gols")
-        st.pyplot(fig)
+    if df_time.empty:
+        st.warning(f"Sem dados para {time_selecionado} no filtro selecionado.")
     else:
-        st.warning(f"Sem dados para {time_selecionado}")
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(media_ano.index, media_ano.values, marker="o")
-    ax.set_title(f"Média de gols por ano — {time}")
-    ax.set_xlabel("Ano")
-    ax.set_ylabel("Média de gols")
+        # --- DEFINIÇÃO DINÂMICA DO EIXO X ---
+        # Se selecionou "Todos" os anos -> Eixo X é o ANO
+        # Se selecionou um ano específico -> Eixo X é a RODADA
+        if ano == "Todos":
+            coluna_agrupamento = "ano_campeonato"
+            label_x = "Ano"
+        else:
+            coluna_agrupamento = "rodada"
+            label_x = "Rodada"
 
-    st.pyplot(fig)
-
-    if ano == "Todos":
-        # Média de publico por ano
-        publico_medio_ano = (
-        dfToFilter[dfToFilter[tipo[0]] == time]
-        .groupby("ano_campeonato")["publico"]
-        .mean()
-        .sort_index()
-    )
-        texto = f"Média de publico por ano {opcao}"
-    else:
-        # Média de publico por rodada
-        publico_medio_ano = (
-            dfToFilter[dfToFilter[tipo[0]] == time]
-            .groupby("rodada")["publico"]
+        # --- GRÁFICO 1: MÉDIA DE GOLS ---
+        media_gols_time = (
+            df_time.groupby(coluna_agrupamento)["gols_mandante"]
             .mean()
             .sort_index()
-        )   
-        texto = f"Média de publico por rodada {opcao}"
+        )
 
-    print(publico_medio_ano)
+        fig, ax = plt.subplots(figsize=(12, 5))
+        # astype(int) garante que o ano/rodada não apareça como 2003.0
+        ax.plot(media_gols_time.index.astype(int), media_gols_time.values, marker="o", color="blue")
+        ax.set_title(f"Média de Gols - {time_selecionado}")
+        ax.set_xlabel(label_x)
+        ax.set_ylabel("Média de Gols")
+        ax.set_xticks(media_gols_time.index.astype(int)) # Força ticks inteiros
+        st.pyplot(fig)
 
-    fig1, ax1 = plt.subplots(figsize=(12, 6))
-    # fazer um if pra trocar por rodada tambem
-    st.subheader(texto)
+        # --- GRÁFICO 2: MÉDIA DE PÚBLICO ---
+        # Verifica se existe coluna de publico antes de tentar plotar
+        colunas_possiveis = ["publico", "publico_pagante"]
+        coluna_publico = next((c for c in colunas_possiveis if c in df_time.columns), None)
 
-    ax1.plot(publico_medio_ano.index.astype(int), publico_medio_ano.values, marker="o")
-    #ax1.set_xticklabels(publico_medio_ano.index, rotation=90)
-    ax1.set_xticks(publico_medio_ano.index.astype(int))
-    ax1.set_xticklabels(publico_medio_ano.index.astype(int), rotation=45)
+        if coluna_publico:
+            media_publico = (
+                df_time.groupby(coluna_agrupamento)[coluna_publico]
+                .mean()
+                .sort_index()
+            )
 
-    ax1.set_title(f"ano")
-    ax1.set_xlabel("Time")
-    ax1.set_ylabel("Público médio")
-    st.pyplot(fig1)
+            st.subheader(f"Média de Público por {label_x}")
+            fig1, ax1 = plt.subplots(figsize=(12, 5))
+            ax1.plot(media_publico.index.astype(int), media_publico.values, marker="o", color="green")
+            ax1.set_title(f"Público - {time_selecionado}")
+            ax1.set_xlabel(label_x)
+            ax1.set_ylabel("Público Médio")
+            ax1.set_xticks(media_publico.index.astype(int)) # Força ticks inteiros
+            st.pyplot(fig1)
+        else:
+            st.info("Dados de público não disponíveis neste dataset.")
