@@ -66,5 +66,3 @@ Essa aba permite uma análise completa do desempenho do time escolhido.
 Resumo das tecnologias utilizadas e do propósito do dashboard.
 
 ---
-
-## 📁 Estrutura do Projeto
