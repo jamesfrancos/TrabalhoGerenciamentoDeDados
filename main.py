@@ -250,5 +250,5 @@ else:
 
         # -- Técnicos com passagens pelo time
         tecnicos_time = df_desempenho_tecnico_time[df_desempenho_tecnico_time['time'] == time_selecionado]
-        st.subheader(f"Tecnicos com passagem - {time_selecionado} e seu desempenho")
+        st.subheader(f"Técnicos com passagem - {time_selecionado} e seu desempenho")
         st.dataframe(tecnicos_time)
