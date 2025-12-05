@@ -164,7 +164,7 @@ if time_selecionado == "Todos":
     top_10_melhores = melhores_tecnicos[:10]
     st.dataframe(top_10_melhores)
 
-    #Piores tecnicos
+    #Piores técnicos
     piores_tecnicos = df_desempenho_tecnicos.sort_values(by=["vitorias","derrotas","gols_sofridos"],ascending=[True,False,False])
     st.subheader("Piores técnicos")
     top_10_piores = piores_tecnicos[:10]
