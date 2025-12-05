@@ -59,12 +59,23 @@ ano = st.sidebar.selectbox("Selecione o Ano", anos)
 opcao = st.sidebar.selectbox("Foco da Análise:", ("Mandante", "Visitante"))
 
 if opcao == "Mandante":
-    tipo = ("time_mandante", "gols_mandante")
+    tipo = ("time_mandante", "gols_mandante", "gols_visitante")
 else:
-    tipo = ("time_visitante", "gols_visitante")
+    tipo = ("time_visitante", "gols_visitante", "gols_mandante")
+
+
+# adiciona coluna de resultado ao df filtrado
+df["resultado"] = df.apply(
+        lambda x: "V" if x[tipo[1]] > x[tipo[2]]
+        else ("E" if x[tipo[1]] == x[tipo[2]] else "D"),
+        axis=1
+    )
 
 # Cria dataframe filtrado pelo ano (usado globalmente)
 dfToFilter = df.copy()
+
+
+
 if ano != "Todos":
     dfToFilter = dfToFilter[dfToFilter["ano_campeonato"] == ano]
 
@@ -115,6 +126,41 @@ with tab_geral:
             st.pyplot(fig1)
         else:
             st.info("Selecione 'Todos' os anos para ver o ranking geral de público.")
+
+    col3, col42 = st.columns(2)
+    col3, col4 = st.columns([3, 3])
+    # Grafíco 3: QUANTIDADE DE VITÓRIAS
+    with col3:
+        st.subheader(f"Número de Vitórias ({opcao})")
+
+        aproveitamento_v = (dfToFilter[dfToFilter["resultado"] == "V" ]
+        .groupby(tipo[0])["resultado"]
+        .count().sort_values())
+
+        fig2, ax2 = plt.subplots(figsize=(10, 8))
+        ax2.bar(aproveitamento_v.index, aproveitamento_v.values, color='green')
+        ax2.set_xticklabels(aproveitamento_v.index, rotation=90)
+        ax2.set_title(f"Quantidade de vitórias por time {opcao}")
+        ax2.set_xlabel("Time")
+        ax2.set_ylabel("Quantidade de vitórias")
+        
+        st.pyplot(fig2)
+    
+    with col4:
+        st.subheader(f"Número de Derrotas ({opcao})")
+
+        aproveitamento_d = (dfToFilter[dfToFilter["resultado"] == "D"]
+        .groupby(tipo[0])["resultado"]
+        .count().sort_values())
+        
+        fig3, ax3 = plt.subplots(figsize=(10, 8))
+        ax3.bar(aproveitamento_d.index, aproveitamento_d.values, color='red')
+        ax3.set_xticklabels(aproveitamento_d.index, rotation=90)
+        ax3.set_title(f"Quantidade de derrotas por time {opcao}")
+        ax3.set_xlabel("Time")
+        ax3.set_ylabel("Quantidade de derrotas")
+            
+        st.pyplot(fig3)
 
 # ---------------------------------------------------------
 # ABA 2: POR TIME (Seleção + Detalhes)
@@ -194,7 +240,6 @@ with tab_times:
                     st.pyplot(fig_p)
                 else:
                     st.info("Dados de público indisponíveis.")
-
       
             st.subheader("📈 Trajetória no Campeonato")
             
@@ -221,6 +266,42 @@ with tab_times:
             else:
                 st.info("Selecione um ano específico para ver a evolução rodada a rodada.")
 
+            # --- GRÁFICO 3: PORCENTAGEM DE VITORIAS, DERROTAS, EMPATES ---
+        
+            # Cálculo básico dos resultados
+
+            aproveitamento_v = (df_time[df_time["resultado"] == "V" ]
+            .groupby(tipo[0])["resultado"]
+            .count().sort_values())
+
+            aproveitamento_d = (df_time[df_time["resultado"] == "D"]
+            .groupby(tipo[0])["resultado"]
+            .count().sort_values())
+            
+            aproveitamento_e = (df_time[df_time["resultado"] == "E"]
+            .groupby(tipo[0])["resultado"]
+            .count().sort_values())
+        
+            
+            aproveitamento_df = pd.DataFrame({
+                "Vitórias": aproveitamento_v,
+                "Derrotas": aproveitamento_d,
+                "Empates": aproveitamento_e
+            })
+            # quantidade de vitorias
+            fig2, ax2 = plt.subplots(figsize=(12, 6))
+
+            st.subheader(f"Aproveitamento {opcao}")
+            
+            aproveitamento_df.plot(kind="bar", ax=ax2, color=['green', 'red', 'gray'])
+
+            ax2.set_title(f"Aproveitamento por time ({opcao})")
+            ax2.set_xlabel("Time")
+            ax2.set_ylabel("Quantidade")
+            ax2.set_xticklabels(aproveitamento_df.index, rotation=90)
+
+            st.pyplot(fig2)
+            print(df_time[["resultado", "gols_mandante", "gols_visitante", "time_mandante", "time_visitante", "data"]])
     else:
         st.info("👆 Clique em um escudo acima para ver as estatísticas.")
 
