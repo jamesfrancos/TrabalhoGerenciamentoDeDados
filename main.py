@@ -4,11 +4,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from st_clickable_images import clickable_images 
 from carregaImagens import carregaImagens, NOMES_UNIFICADOS
+import plotly.express as px
+
+# Configuração da Página
+st.set_page_config(layout="wide", page_title="Brasileirão Analytics")
 
 # Configuração da Sessão Spark
 sp = SparkSession.builder.appName("Brasileirao").getOrCreate()
 
-st.title("Análises do Brasileirão")
+st.title("⚽ Análises do Brasileirão")
 
 # --- 1. CARGA DE DADOS ---
 @st.cache_resource
@@ -20,7 +24,9 @@ def load_data():
 
 @st.cache_data
 def toPandas(_df_spark):
-    return _df_spark.toPandas()
+    if _df_spark:
+        return _df_spark.toPandas()
+    return pd.DataFrame() 
 
 @st.cache_data
 def carregar_dados(arquivo):
@@ -38,8 +44,8 @@ df_desempenho_times_ano = carregar_dados("desempenho_times_ano.csv")
 
 # --- 2. LIMPEZA DOS NOMES ---
 if not df.empty:
-    # Unifica nomes (Ex: Santos FC -> Santos)
     df["time_mandante"] = df["time_mandante"].str.strip().replace(NOMES_UNIFICADOS)
+    df["time_visitante"] = df["time_visitante"].str.strip().replace(NOMES_UNIFICADOS)
 
 if not df_desempenho_tecnico_time.empty:
     df_desempenho_tecnico_time["time"] = df_desempenho_tecnico_time["time"].str.strip().replace(NOMES_UNIFICADOS)
@@ -60,103 +66,224 @@ lista_nomes = []
 lista_imagens = []
 
 if not df.empty:
-    lista_nomes, lista_imagens = preparar_imagens(df["time_mandante"].unique())
+    # Pega times unicos (tanto mandante quanto visitante para garantir todos)
+    todos_times = pd.concat([df["time_mandante"], df["time_visitante"]]).unique()
+    lista_nomes, lista_imagens = preparar_imagens(todos_times)
 
-# --- 4. FILTRO DE ANO ---
+# --- 4. FILTROS GLOBAIS (SIDEBAR) ---
+st.sidebar.header("Filtros")
 anos = ["Todos"] + sorted(df["ano_campeonato"].unique())
 ano = st.sidebar.selectbox("Selecione o Ano", anos)
 
-# Cria dataframe filtrado pelo ano (usado no gráfico geral)
+opcao = st.sidebar.selectbox("Foco da Análise:", ("Mandante", "Visitante"))
+
+if opcao == "Mandante":
+    tipo = ("time_mandante", "gols_mandante", "gols_visitante")
+else:
+    tipo = ("time_visitante", "gols_visitante", "gols_mandante")
+
+
+# adiciona coluna de resultado ao df filtrado
+df["resultado"] = df.apply(
+        lambda x: "V" if x[tipo[1]] > x[tipo[2]]
+        else ("E" if x[tipo[1]] == x[tipo[2]] else "D"),
+        axis=1
+    )
+
+# Cria dataframe filtrado pelo ano (usado globalmente)
 dfToFilter = df.copy()
+
+
+
 if ano != "Todos":
     dfToFilter = dfToFilter[dfToFilter["ano_campeonato"] == ano]
 
-opcao = st.sidebar.selectbox("Escolha o tipo de time:", ("Mandante", "Visitante"))
-# --- 6. Caixa de seleção dos times ---
+# =========================================================
+# ESTRUTURA DE ABAS
+# =========================================================
+tab_geral, tab_times, tab_sobre = st.tabs(["🌎 Visão Geral", "🔍 Por Time", "ℹ️ Sobre"])
 
-if opcao == "Mandante":
-    tipo = ("time_mandante", "gols_mandante")
+# ---------------------------------------------------------
+# ABA 1: VISÃO GERAL (Gráficos de todos os times)
+# ---------------------------------------------------------
+with tab_geral:
+    st.header(f"Panorama Geral - {ano}")
     
-else:
-    tipo = ("time_visitante", "gols_visitante")
+    col1, col2 = st.columns(2)
+    
+    # GRÁFICO 1: MÉDIA DE GOLS
+    with col1:
+        st.subheader(f"Média de gols ({opcao})")
+        media_gols = (
+            dfToFilter.groupby(tipo[0])[tipo[1]]
+            .mean()
+            .sort_values()
+        )
 
-# --- 6. SELEÇÃO DE TIME (VISUAL) ---
-st.write("---")
-st.subheader("Selecione um time:")
+        if not media_gols.empty:
+            fig, ax = plt.subplots(figsize=(10, 8)) # Ajustei tamanho
+            ax.barh(media_gols.index, media_gols.values, color="skyblue") # Mudei para barh (horizontal) fica melhor pra ler nomes
+            ax.set_title(f"Média de Gols")
+            ax.set_xlabel("Gols")
+            st.pyplot(fig)
+    
+    # GRÁFICO 2: MÉDIA DE PÚBLICO
+    with col2:
+        if ano == "Todos":
+            st.subheader(f"Média de Público ({opcao})")
+            publico_medio = (
+                dfToFilter[dfToFilter["publico"] > 0]
+                .groupby(tipo[0])["publico"]
+                .mean()
+                .sort_values()
+            )
+            
+            fig1, ax1 = plt.subplots(figsize=(10, 8))
+            ax1.barh(publico_medio.index, publico_medio.values, color="salmon")
+            ax1.set_title(f"Público Médio")
+            ax1.set_xlabel("Pessoas")
+            st.pyplot(fig1)
+        else:
+            st.info("Selecione 'Todos' os anos para ver o ranking geral de público.")
 
-# Inicializa chave para resetar imagens
-if 'img_key' not in st.session_state:
-    st.session_state['img_key'] = 0
+    col3, col42 = st.columns(2)
+    col3, col4 = st.columns([3, 3])
+    # Grafíco 3: QUANTIDADE DE VITÓRIAS
+    with col3:
+        st.subheader(f"Número de Vitórias ({opcao})")
 
-# Botão de Reset
-if st.button("Ver todos os times (Limpar seleção)"):
-    st.session_state['img_key'] += 1
-    st.rerun() 
+        aproveitamento_v = (dfToFilter[dfToFilter["resultado"] == "V" ]
+        .groupby(tipo[0])["resultado"]
+        .count().sort_values())
 
-# Componente Clickable Images
-clicked_index = clickable_images(
-    paths=lista_imagens, 
-    titles=lista_nomes,
-    div_style={
-        "display": "flex", "justify-content": "center", "flex-wrap": "wrap",
-        "background-color": "#f9f9f9", "padding": "10px", "border-radius": "10px"
-    },
-    img_style={
-        "margin": "5px", "height": "60px", "object-fit": "contain", 
-        "cursor": "pointer", ":hover": {"transform": "scale(1.1)"} 
-    },
-    key=f"image_div_{st.session_state['img_key']}" 
-)
+        fig2, ax2 = plt.subplots(figsize=(10, 8))
+        ax2.bar(aproveitamento_v.index, aproveitamento_v.values, color='green')
+        ax2.set_xticklabels(aproveitamento_v.index, rotation=90)
+        ax2.set_title(f"Quantidade de vitórias por time {opcao}")
+        ax2.set_xlabel("Time")
+        ax2.set_ylabel("Quantidade de vitórias")
+        
+        st.pyplot(fig2)
+    
+    with col4:
+        st.subheader(f"Número de Derrotas ({opcao})")
 
-# Define qual time está selecionado
-time_selecionado = "Todos"
-if clicked_index > -1:
-    time_selecionado = lista_nomes[clicked_index]
-    st.markdown(f"**Time Selecionado:** {time_selecionado}")
+        aproveitamento_d = (dfToFilter[dfToFilter["resultado"] == "D"]
+        .groupby(tipo[0])["resultado"]
+        .count().sort_values())
+        
+        fig3, ax3 = plt.subplots(figsize=(10, 8))
+        ax3.bar(aproveitamento_d.index, aproveitamento_d.values, color='red')
+        ax3.set_xticklabels(aproveitamento_d.index, rotation=90)
+        ax3.set_title(f"Quantidade de derrotas por time {opcao}")
+        ax3.set_xlabel("Time")
+        ax3.set_ylabel("Quantidade de derrotas")
+            
+        st.pyplot(fig3)
 
-# =========================================================
-# LÓGICA DE PLOTAGEM
-# =========================================================
+# ---------------------------------------------------------
+# ABA 2: POR TIME (Seleção + Detalhes)
+# ---------------------------------------------------------
+with tab_times:
+    st.header("Análise Detalhada por Clube")
+    
+    # 1. SELETOR DE IMAGENS
+    if 'img_key' not in st.session_state:
+        st.session_state['img_key'] = 0
 
-# CENÁRIO 1: NENHUM TIME SELECIONADO (VISÃO GERAL)
-if time_selecionado == "Todos":
-    # media de gols de todos os times
-    st.subheader(f"Média de gols por time {opcao} (Geral)")
+    if st.button("Limpar Seleção"):
+        st.session_state['img_key'] += 1
+        st.rerun()
 
-    #Agrupa pelo time mandante ou visitante
-    media_gols = (
-    dfToFilter.groupby(tipo[0])[tipo[1]]
-    .mean()
-    .sort_values()
+    clicked_index = clickable_images(
+        paths=lista_imagens, 
+        titles=lista_nomes,
+        div_style={
+            "display": "flex", "justify-content": "center", "flex-wrap": "wrap",
+            "background-color": "#f0f2f6", "padding": "10px", "border-radius": "10px"
+        },
+        img_style={
+            "margin": "5px", "height": "50px", "object-fit": "contain", 
+            "cursor": "pointer", ":hover": {"transform": "scale(1.1)"} 
+        },
+        key=f"image_div_{st.session_state['img_key']}" 
     )
 
-    if not media_gols.empty:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.bar(media_gols.index, media_gols.values)
-        ax.set_xticklabels(media_gols.index, rotation=90)
-        ax.set_title(f"Média de gols por time {opcao}")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Média de gols")
+    # 2. LÓGICA DE EXIBIÇÃO DO TIME
+    if clicked_index > -1:
+        time_selecionado = lista_nomes[clicked_index]
+        st.divider()
+        st.markdown(f"### 📊 Estatísticas do **{time_selecionado}**")
 
-        st.pyplot(fig)
+        # Filtra apenas jogos do time selecionado
+        df_time = df[df[tipo[0]] == time_selecionado].copy()
+        if ano != "Todos":
+            df_time = df_time[df_time["ano_campeonato"] == ano]
 
-    # Média de publico
-    if ano == "Todos":
+        if df_time.empty:
+            st.warning(f"Sem dados para {time_selecionado} com os filtros atuais.")
+        else:
+            # Definição do Eixo X
+            if ano == "Todos":
+                coluna_agrupamento = "ano_campeonato"
+                label_x = "Ano"
+            else:
+                coluna_agrupamento = "rodada"
+                label_x = "Rodada"
 
-        publico_medio = (dfToFilter[dfToFilter["publico"] > 0]
-        .groupby(tipo[0])["publico"].
-        mean()
-        .sort_values())
+            # --- PLOTS DE MATPLOTLIB (Gols e Público) ---
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                # GOLS
+                media_gols_time = df_time.groupby(coluna_agrupamento)[tipo[1]].mean().sort_index()
+                fig_g, ax_g = plt.subplots(figsize=(8, 4))
+                ax_g.plot(media_gols_time.index.astype(int), media_gols_time.values, marker="o", color="blue")
+                ax_g.set_title("Média de Gols")
+                ax_g.set_xlabel(label_x)
+                ax_g.grid(True, alpha=0.3)
+                st.pyplot(fig_g)
+
+            with c2:
+                # PÚBLICO
+                colunas_possiveis = ["publico", "publico_pagante"]
+                coluna_publico = next((c for c in colunas_possiveis if c in df_time.columns), None)
+                
+                if coluna_publico:
+                    media_publico = df_time[df_time[coluna_agrupamento] > 0].groupby(coluna_agrupamento)[coluna_publico].mean().sort_index()
+                    fig_p, ax_p = plt.subplots(figsize=(8, 4))
+                    ax_p.plot(media_publico.index.astype(int), media_publico.values, marker="o", color="green")
+                    ax_p.set_title("Média de Público")
+                    ax_p.set_xlabel(label_x)
+                    ax_p.grid(True, alpha=0.3)
+                    st.pyplot(fig_p)
+                else:
+                    st.info("Dados de público indisponíveis.")
+      
+            st.subheader("📈 Trajetória no Campeonato")
+            
+            if ano != "Todos":
         
-        fig1, ax1 = plt.subplots(figsize=(12, 6))
-        st.subheader(f"Média de publico por time {opcao}")
-        ax1.bar(publico_medio.index, publico_medio.values)
-        ax1.set_xticklabels(publico_medio.index, rotation=90)
-        ax1.set_title(f"Público médio por time {opcao}")
-        ax1.set_xlabel("Time")
-        ax1.set_ylabel("Público médio")
-        
-        st.pyplot(fig1)
+                df_home = dfToFilter[dfToFilter["time_mandante"] == time_selecionado][["rodada", "colocacao_mandante"]].rename(columns={"colocacao_mandante": "colocacao"})
+                df_away = dfToFilter[dfToFilter["time_visitante"] == time_selecionado][["rodada", "colocacao_visitante"]].rename(columns={"colocacao_visitante": "colocacao"})
+                
+                df_full_season = pd.concat([df_home, df_away]).sort_values("rodada")
+                
+                if not df_full_season.empty:
+                    fig_evo = px.line(
+                        df_full_season, 
+                        x="rodada", 
+                        y="colocacao", 
+                        markers=True,
+                        title=f"Evolução da Posição - {time_selecionado} ({ano})"
+                    )
+                  
+                    fig_evo.update_yaxes(autorange="reversed", range=[21, 0]) 
+                    st.plotly_chart(fig_evo, use_container_width=True)
+                else:
+                    st.warning("Dados de colocação não encontrados para este time neste ano.")
+            else:
+                st.info("Selecione um ano específico para ver a evolução rodada a rodada.")
 
     # Melhores técnicos 
     melhores_tecnicos = df_desempenho_tecnicos.sort_values(by=["vitorias","gols_feitos"],ascending=[False,False])
@@ -176,24 +303,44 @@ else:
     
     # 1. Filtra apenas os jogos desse time como mandante
     df_time = df[df[tipo[0]] == time_selecionado].copy()
-
-    # Se um ano específico foi escolhido lá em cima, filtramos também pelo ano
-    if ano != "Todos":
-        df_time = df_time[df_time["ano_campeonato"] == ano]
-
-    if df_time.empty:
-        st.warning(f"Sem dados para {time_selecionado} no filtro selecionado.")
+            # --- GRÁFICO 3: PORCENTAGEM DE VITORIAS, DERROTAS, EMPATES ---
         
+            # Cálculo básico dos resultados
+
+            aproveitamento_v = (df_time[df_time["resultado"] == "V" ]
+            .groupby(tipo[0])["resultado"]
+            .count().sort_values())
+
+            aproveitamento_d = (df_time[df_time["resultado"] == "D"]
+            .groupby(tipo[0])["resultado"]
+            .count().sort_values())
+            
+            aproveitamento_e = (df_time[df_time["resultado"] == "E"]
+            .groupby(tipo[0])["resultado"]
+            .count().sort_values())
+        
+            
+            aproveitamento_df = pd.DataFrame({
+                "Vitórias": aproveitamento_v,
+                "Derrotas": aproveitamento_d,
+                "Empates": aproveitamento_e
+            })
+            # quantidade de vitorias
+            fig2, ax2 = plt.subplots(figsize=(12, 6))
+
+            st.subheader(f"Aproveitamento {opcao}")
+            
+            aproveitamento_df.plot(kind="bar", ax=ax2, color=['green', 'red', 'gray'])
+
+            ax2.set_title(f"Aproveitamento por time ({opcao})")
+            ax2.set_xlabel("Time")
+            ax2.set_ylabel("Quantidade")
+            ax2.set_xticklabels(aproveitamento_df.index, rotation=90)
+
+            st.pyplot(fig2)
+            print(df_time[["resultado", "gols_mandante", "gols_visitante", "time_mandante", "time_visitante", "data"]])
     else:
-        # --- DEFINIÇÃO DINÂMICA DO EIXO X ---
-        # Se selecionou "Todos" os anos -> Eixo X é o ANO
-        # Se selecionou um ano específico -> Eixo X é a RODADA
-        if ano == "Todos":
-            coluna_agrupamento = "ano_campeonato"
-            label_x = "Ano"
-        else:
-            coluna_agrupamento = "rodada"
-            label_x = "Rodada"
+        st.info("👆 Clique em um escudo acima para ver as estatísticas.")
 
         # --- GRÁFICO 1: MÉDIA DE GOLS ---
         media_gols_time = (
@@ -252,3 +399,15 @@ else:
         tecnicos_time = df_desempenho_tecnico_time[df_desempenho_tecnico_time['time'] == time_selecionado]
         st.subheader(f"Técnicos com passagem - {time_selecionado} e seu desempenho")
         st.dataframe(tecnicos_time)
+# ---------------------------------------------------------
+# ABA 3: SOBRE
+# ---------------------------------------------------------
+with tab_sobre:
+    st.header("Sobre o Dashboard")
+    st.write("""
+        Este dashboard utiliza dados históricos do Campeonato Brasileiro (Série A).
+        Tecnologias utilizadas:
+        - **PySpark**: Processamento de dados
+        - **Streamlit**: Interface Web
+        - **Pandas/Matplotlib/Plotly**: Visualização
+    """)
